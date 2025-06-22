@@ -1,0 +1,4 @@
+*.vcd
+*.o
+obj_dir/
+*.exe
