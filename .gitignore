@@ -2,3 +2,4 @@
 *.o
 obj_dir/
 *.exe
+.DS_STORE
