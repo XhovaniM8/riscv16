@@ -6,7 +6,8 @@
  *
  ****************************************************************************/
 module alu (
-    input logic [15:0] alu_sr1, alu_src2,
+    input logic [15:0] alu_src1, 
+    input logic [15:0] alu_src2,
     input logic ADD, NAND, PASS1, EQ,
     output logic [15:0] alu_out,
     output logic eq_out
