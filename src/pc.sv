@@ -1,26 +1,15 @@
 // Program Counter
 
-module counter (
-  input  logic clk,
-  input  logic rst,
-  input  logic [15:0] nextpc,
-  output logic [15:0] pc
+module pc(
+    input  logic clk;
+    input  logic rst;
+    input  logic [15:0] nextpc;
+    output logic [15:0] pc;
 );
-
-initial begin 
-    pc <= 16'h0000;
-end
-
-always @(posedge clk)
+    always @(posedge clk or posedge rst)
     begin
-        if (rst == 1)
-            begin
-                pc <= 16'h0000;
-            end
-        else
-            begin
-                nextpc <= nextpc + 1;
-            end
+        if (rst) pc <= 16'b0;
+        else pc <= nextpc;
     end
-endmodule // counter.sv
+endmodule // program_counter
 
