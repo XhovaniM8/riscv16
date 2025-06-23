@@ -1,17 +1,13 @@
 // src/alu.v
 module alu (
-    input  logic [15:0] op1,
-    input  logic [15:0] op2,
-    input  logic [2:0]  alu_op,   // e.g., 000 = ADD, 001 = NAND
-    output logic [15:0] result
+    input logic [15:0] alu_sr1, alu_src2,
+    input logic ADD, NAND, PASS1, EQ,
+    output logic [15:0] alu_out,
+    output logic eq_out
 );
-
-    always_comb begin
-        case (alu_op)
-            3'b000: result = op1 + op2;             // ADD
-            3'b001: result = ~(op1 & op2);          // NAND
-            default: result = 16'h0000;
-        endcase
-    end
-
+    assign alu_out = (ADD) ? alu_src1 + alu_src2 :
+                     (NAND) ? ~(alu_src1 & alu_src2) :
+                     (PASS1) ? alu_src1 : 16'b0;
+    
+    assign eq_out = (EQ) ? (alu_src1 == alu_src2) : 1'b0;
 endmodule
