@@ -1,4 +1,10 @@
-// src/alu.v
+/***************************************************************************
+ *
+ * Module:  alu.sv
+ *
+ * Description: This module implements an 16b ALU
+ *
+ ****************************************************************************/
 module alu (
     input logic [15:0] alu_sr1, alu_src2,
     input logic ADD, NAND, PASS1, EQ,
