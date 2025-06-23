@@ -1,3 +1,10 @@
+/***************************************************************************
+ *
+ * Module:  control.sv
+ *
+ * Description: This module implements a control unit for the 16b risc-v
+ *
+ ****************************************************************************/
 module control(
     input wire [2:0] opcode,
     input wire eq_out,
