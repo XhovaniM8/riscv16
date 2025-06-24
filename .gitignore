@@ -1,5 +1,63 @@
+# Waveform files
 *.vcd
+*.fst
+*.ghw
+
+# Object files and binaries
 *.o
-obj_dir/
+*.a
+*.so
 *.exe
-.DS_STORE
+*.out
+
+# Verilator generated files
+obj_dir/
+verilated/
+*.mk
+
+# CMake build files
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Compiled simulation executables
+V*
+!*.sv
+!*.v
+
+# Temporary and cache files
+*.tmp
+*.log
+*.dmp
+*~
+*.swp
+*.swo
+
+# macOS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# VS Code specific
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/*.log
+
+# SystemVerilog Language Server
+.svlangserver/
+
+# Documentation builds
+doc/build/
+*.pdf
+
+# Memory files (depending on use case)
+# mem/*.hex
+# mem/*.bin

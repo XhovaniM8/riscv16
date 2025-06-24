@@ -1,0 +1,4 @@
+/Users/rougeboy/Documents/NYU/04_Summer25/vip-processor/riscv16/build/CMakeFiles/verilate_tb.dir
+/Users/rougeboy/Documents/NYU/04_Summer25/vip-processor/riscv16/build/CMakeFiles/run_alu_tb.dir
+/Users/rougeboy/Documents/NYU/04_Summer25/vip-processor/riscv16/build/CMakeFiles/edit_cache.dir
+/Users/rougeboy/Documents/NYU/04_Summer25/vip-processor/riscv16/build/CMakeFiles/rebuild_cache.dir
