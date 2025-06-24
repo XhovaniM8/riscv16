@@ -228,6 +228,9 @@ VCD trace saved to alu_tb.vcd
 - Time 2-3ps: EQ operation (0xAAAA == 0xAAAA → eq_out = 1) - PASS
 - Time 3ps+: EQ operation (0xAAAA != 0xBBBB → eq_out = 0) - PASS
 
+<img width="1401" alt="GTKWAVE_ALU" src="https://github.com/user-attachments/assets/17638926-48a1-49d8-8a83-e8c9dc0fbd1f" />
+  
+
 All ALU operations verified through both console output and waveform inspection.
 
 ## Status
