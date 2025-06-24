@@ -113,29 +113,93 @@ Avoid using Verilator's `--build` flag within the `add_custom_command` in CMake.
 - **Critical**: Must include `verilated_threads.o` for ARM64 architecture support
 
 ### Manual Compilation Workflow (WORKING)
-1. **Generate C++ sources with tracing**:
+
+**Complete Working Build Process:**
+
+1. **Clean and generate C++ sources with tracing**:
    ```sh
+   rm -rf obj_dir
    verilator -Wall --cc src/alu.sv --exe dv/alu_tb.cpp -I./src --top-module alu --trace
+   cd obj_dir
    ```
-2. **Compile all required object files individually**:
-   - Testbench: `alu_tb.o`
-   - Verilator runtime: `verilated.o`, `verilated_vcd_c.o`, `verilated_threads.o`
-   - Generated ALU: `Valu__ALL.o` (created via `verilator_includer`)
-3. **Link with pthread support**:
+
+2. **Compile testbench and Verilator runtime**:
+   ```sh
+   # Common flags
+   CFLAGS="-Os -I. -MMD -I/usr/local/share/verilator/include -I/usr/local/share/verilator/include/vltstd -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -faligned-new -fbracket-depth=4096 -fcf-protection=none -Wno-bool-operation -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable"
+   
+   # Compile testbench
+   g++ $CFLAGS -c ../dv/alu_tb.cpp
+   
+   # Compile Verilator runtime
+   g++ $CFLAGS -c /usr/local/share/verilator/include/verilated.cpp
+   g++ $CFLAGS -c /usr/local/share/verilator/include/verilated_vcd_c.cpp
+   g++ $CFLAGS -c /usr/local/share/verilator/include/verilated_threads.cpp
+   ```
+
+3. **Compile generated ALU sources individually** (avoids archive issues):
+   ```sh
+   # Compile each generated file separately to avoid duplicate symbols
+   for file in Valu.cpp Valu___024root__*.cpp Valu__Trace__*.cpp Valu__Syms.cpp; do
+       g++ $CFLAGS -c "$file"
+   done
+   ```
+
+4. **Link with pthread support**:
    ```sh
    g++ -o Valu *.o -pthread
    ```
 
-### VCD Trace Generation
-For VCD file generation, ensure your testbench includes:
+5. **Run simulation and open GTKWave**:
+   ```sh
+   ./Valu
+   gtkwave alu_tb.vcd
+   ```
+
+### VCD Trace Generation Requirements
+
+For VCD file generation, your testbench **must** include:
+
 ```cpp
-// In alu_tb.cpp
-VerilatedVcdC* tfp = new VerilatedVcdC;
-top->trace(tfp, 99);
-tfp->open("alu_tb.vcd");
-// During simulation:
-tfp->dump(contextp->time());
+#include "Valu.h"
+#include "verilated.h"
+#include "verilated_vcd_c.h"  // Required for VCD tracing
+
+int main(int argc, char **argv) {
+    Verilated::commandArgs(argc, argv);
+    
+    // CRITICAL: Enable tracing before creating any traced objects
+    Verilated::traceEverOn(true);
+    
+    // Create ALU instance
+    Valu *top = new Valu;
+    
+    // Initialize VCD tracing
+    VerilatedVcdC* tfp = new VerilatedVcdC;
+    top->trace(tfp, 99);  // Trace 99 levels of hierarchy
+    tfp->open("alu_tb.vcd");  // Open VCD file
+    
+    int time_counter = 0;
+    
+    // Your test logic with tfp->dump() calls
+    top->eval();
+    tfp->dump(time_counter++);  // Dump current state to VCD
+    
+    // Close VCD file
+    tfp->close();
+    
+    // Cleanup
+    delete top;
+    delete tfp;
+    return 0;
+}
 ```
+
+**Critical Points:**
+- Must call `Verilated::traceEverOn(true)` before creating traced objects
+- Must include `verilated_vcd_c.h` header
+- Must call `tfp->dump(time)` after each `eval()` to capture state changes
+- Must compile with `-DVM_TRACE=1 -DVM_TRACE_VCD=1` flags
 
 ### Debugging Tips
 - Always verify generated C++ files exist before attempting compilation
@@ -143,19 +207,33 @@ tfp->dump(contextp->time());
 - Test with simpler modules first (like ALU) before complex systems (like RISC16 top-level)
 - Include `verilated_threads.o` when linking on ARM64 to avoid threading symbol errors
 - Use `--trace` flag during Verilator generation for VCD output
+- Compile each generated file individually to avoid duplicate symbol errors from `verilator_includer`
+- Must include all trace files: `Valu__Trace__*.cpp` and `Valu__TraceDecls__*.cpp`
 
 ## Test Results
-Recent successful simulation output:
+
+**Recent successful simulation output:**
 ```
+Starting ALU testbench with VCD tracing...
 [ADD] alu_out: 8 (expected 8)
 [NAND] alu_out: 0xF0F0 (expected 0xF0F0)
 [EQ=1] eq_out: 1 (expected 1)
 [EQ=0] eq_out: 0 (expected 0)
+VCD trace saved to alu_tb.vcd
 ```
 
+**GTKWave Waveform Analysis:**
+- Time 0-1ps: ADD operation (5 + 3 = 8) - PASS
+- Time 1-2ps: NAND operation (~(0xFFFF & 0x0F0F) = 0xF0F0) - PASS  
+- Time 2-3ps: EQ operation (0xAAAA == 0xAAAA → eq_out = 1) - PASS
+- Time 3ps+: EQ operation (0xAAAA != 0xBBBB → eq_out = 0) - PASS
+
+All ALU operations verified through both console output and waveform inspection.
+
 ## Status
-- **ALU simulation**: ✅ Working correctly with manual build process
-- **VCD generation**: ✅ Verified for waveform analysis
-- **GTKWave integration**: ✅ Ready for signal inspection
+- **ALU simulation**: Working correctly with manual build process
+- **VCD generation**: Verified working with complete trace capture
+- **GTKWave integration**: Successfully displays all ALU signals and operations
+- **macOS Verilator issues**: Fully resolved with individual file compilation
 - **RISC16 top-level**: Requires build system refactoring due to Verilator issues
-- **Next steps**: Implement CMake-based manual compilation workflow to avoid Verilator's problematic auto-build
+- **Next steps**: Apply same manual compilation workflow to full RISC16 processor
