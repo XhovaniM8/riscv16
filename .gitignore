@@ -61,3 +61,4 @@ doc/build/
 # Memory files (depending on use case)
 # mem/*.hex
 # mem/*.bin
+.vscode/
