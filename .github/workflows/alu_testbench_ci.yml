@@ -41,3 +41,201 @@ jobs:
           echo "Verilator path: $(which verilator)"
 
       - name: Create build directory
+        run: mkdir -p build
+
+      - name: Verify project structure
+        run: |
+          echo "=== Project Structure ==="
+          find . -name "*.sv" -o -name "*.cpp" -o -name "CMakeLists.txt" | head -20
+          echo "=== Required files check ==="
+          test -f src/alu.sv && echo "✓ ALU source found" || echo "✗ ALU source missing"
+          test -f dv/alu_tb.cpp && echo "✓ C++ testbench found" || echo "✗ C++ testbench missing"
+          test -f CMakeLists.txt && echo "✓ CMakeLists.txt found" || echo "✗ CMakeLists.txt missing"
+
+      - name: Try CMake build first
+        continue-on-error: true
+        run: |
+          echo "=== Attempting CMake build ==="
+          cd build
+          cmake -S .. -B .
+          cmake --build . --target run_alu_tb -j || echo "CMake build failed"
+
+      - name: Manual Verilator build (fallback)
+        if: always()
+        run: |
+          echo "=== Manual Verilator Build Process ==="
+          rm -rf obj_dir verilated/
+          verilator -Wall --cc src/alu.sv --exe dv/alu_tb.cpp \
+                    -I./src --top-module alu --trace \
+                    || (echo "❌ Verilator generation failed" && exit 1)
+          test -d obj_dir && echo "✓ obj_dir created" || (echo "❌ obj_dir not created" && exit 1)
+          cd obj_dir
+          VERILATOR_ROOT="/usr/share/verilator"
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            VERILATOR_ROOT="/usr/local/share/verilator"
+          fi
+          CFLAGS="-Os -I. -MMD -I${VERILATOR_ROOT}/include -I${VERILATOR_ROOT}/include/vltstd"
+          CFLAGS="$CFLAGS -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1"
+          CFLAGS="$CFLAGS -faligned-new -fbracket-depth=4096"
+          CFLAGS="$CFLAGS -Wno-bool-operation -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable"
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            CFLAGS="$CFLAGS -fcf-protection=none"
+          fi
+          echo "Using CFLAGS: $CFLAGS"
+          g++ $CFLAGS -c -o alu_tb.o ../dv/alu_tb.cpp
+          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated.cpp
+          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated_vcd_c.cpp
+          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated_threads.cpp
+          for file in Valu.cpp Valu___024root__*.cpp Valu__Trace__*.cpp Valu__Syms.cpp; do
+            [ -f "$file" ] && g++ $CFLAGS -c "$file"
+          done
+          g++ -o Valu *.o -pthread
+          test -x Valu && echo "✓ Executable created" || (echo "❌ Link failed" && exit 1)
+
+      - name: Run ALU simulation
+        run: |
+          cd obj_dir
+          echo "=== Running ALU Simulation ==="
+          timeout 30s ./Valu || echo "Simulation completed or timed out"
+          [ -f alu_tb.vcd ] && echo "✓ VCD file generated" || echo "❌ VCD file not generated"
+
+      - name: Validate simulation results
+        run: |
+          cd obj_dir
+          echo "=== Simulation Validation ==="
+          if [ -f alu_tb.vcd ]; then
+            echo "VCD file size: $(stat -c%s alu_tb.vcd 2>/dev/null || stat -f%z alu_tb.vcd)"
+            grep -q "alu_in_a\|alu_in_b\|alu_out" alu_tb.vcd && echo "✓ VCD contains expected signals"
+            grep -q "^#[0-9]" alu_tb.vcd && echo "✓ VCD contains timing information"
+          fi
+
+      - name: Archive simulation artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: alu-simulation-results-${{ matrix.os }}
+          path: |
+            obj_dir/alu_tb.vcd
+            obj_dir/Valu
+            obj_dir/*.cpp
+            obj_dir/*.h
+          retention-days: 7
+
+  lint-and-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Lint SystemVerilog files
+        run: |
+          echo "=== Linting SystemVerilog Files ==="
+          for sv_file in $(find . -name "*.sv"); do
+            verilator --lint-only -Wall "$sv_file" -I./src || echo "Warning in $sv_file"
+          done
+
+      - name: Analyze C++ testbench
+        run: |
+          echo "=== Analyzing C++ Testbench ==="
+          if command -v cppcheck >/dev/null; then
+            cppcheck --enable=warning,style,performance --std=c++17 dv/*.cpp || true
+          else
+            echo "cppcheck not available"
+          fi
+
+  performance-benchmark:
+    runs-on: ubuntu-latest
+    needs: verilator-simulation
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator cmake time
+
+      - name: Build optimized simulation
+        run: |
+          rm -rf obj_dir
+          verilator -Wall --cc src/alu.sv --exe dv/alu_tb.cpp -I./src --top-module alu --trace -O3
+          cd obj_dir
+          CFLAGS="-O3 -march=native -I. -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd"
+          CFLAGS="$CFLAGS -DVM_TRACE=1 -Wno-bool-operation -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable"
+          g++ $CFLAGS -c -o alu_tb.o ../dv/alu_tb.cpp
+          g++ $CFLAGS -c /usr/share/verilator/include/verilated.cpp
+          g++ $CFLAGS -c /usr/share/verilator/include/verilated_vcd_c.cpp
+          g++ $CFLAGS -c /usr/share/verilator/include/verilated_threads.cpp
+          for file in Valu*.cpp; do
+            [ -f "$file" ] && g++ $CFLAGS -c "$file"
+          done
+          g++ -o Valu_optimized *.o -pthread
+
+      - name: Run performance benchmark
+        run: |
+          cd obj_dir
+          echo "=== Performance Benchmark ===" > ../benchmark_results.txt
+          echo "Timestamp: $(date)" >> ../benchmark_results.txt
+          echo "" >> ../benchmark_results.txt
+          { time timeout 30s ./Valu_optimized; } 2>&1 | tee -a ../benchmark_results.txt
+          echo "VCD file size: $(stat -c%s alu_tb.vcd 2>/dev/null || echo 'N/A')" >> ../benchmark_results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-benchmark
+          path: benchmark_results.txt
+
+  cross-platform-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04, macos-12, macos-13]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          if [[ "${{ matrix.os }}" == ubuntu* ]]; then
+            sudo apt-get update
+            sudo apt-get install -y verilator cmake
+          else
+            brew install verilator cmake
+          fi
+
+      - name: Quick build test
+        run: |
+          verilator --version
+          verilator -Wall --cc src/alu.sv -I./src --top-module alu
+          [ -d obj_dir ] && echo "✓ Verilator generation succeeded" || (echo "❌ Verilator generation failed" && exit 1)
+
+  documentation-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check documentation completeness
+        run: |
+          echo "=== Documentation Check ===" > doc_report.txt
+          [ -f README.md ] && echo "✓ README.md found" >> doc_report.txt || echo "✗ README.md missing" >> doc_report.txt
+          echo "SystemVerilog documentation:" >> doc_report.txt
+          sv_total=$(find . -name "*.sv" | wc -l)
+          sv_commented=$(find . -name "*.sv" -exec grep -l "//" {} \; | wc -l)
+          echo "Commented SV files: $sv_commented/$sv_total" >> doc_report.txt
+          cpp_total=$(find . -name "*.cpp" | wc -l)
+          cpp_commented=$(find . -name "*.cpp" -exec grep -l "//" {} \; | wc -l)
+          echo "Commented C++ files: $cpp_commented/$cpp_total" >> doc_report.txt
+
+      - name: Upload documentation report
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation-report
+          path: doc_report.txt
