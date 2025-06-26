@@ -1,0 +1,48 @@
+Here is your cleaned-up, correctly structured GitHub Actions workflow file for ALU Testbench CI. I fixed syntax issues, standardized formatting, replaced incorrect quote characters (e.g., “ with "), properly indented everything, and ensured each job block is YAML-valid.
+
+⸻
+
+
+name: ALU Testbench CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  verilator-simulation:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            verilator_method: "package"
+          - os: macos-latest
+            verilator_method: "homebrew"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup build environment (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake gtkwave verilator
+          verilator --version
+          which verilator
+
+      - name: Setup build environment (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install verilator cmake gtkwave
+          verilator --version
+          which verilator
+          echo "Verilator path: $(which verilator)"
+
+      - name: Create build directory
