@@ -1,241 +1,350 @@
-name: ALU Testbench CI
+name: RISC-16 Processor CI/CD
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:
 
 jobs:
-  verilator-simulation:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            verilator_method: "package"
-          - os: macos-latest
-            verilator_method: "homebrew"
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup build environment (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake gtkwave verilator
-          verilator --version
-          which verilator
-
-      - name: Setup build environment (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install verilator cmake gtkwave
-          verilator --version
-          which verilator
-          echo "Verilator path: $(which verilator)"
-
-      - name: Create build directory
-        run: mkdir -p build
-
-      - name: Verify project structure
-        run: |
-          echo "=== Project Structure ==="
-          find . -name "*.sv" -o -name "*.cpp" -o -name "CMakeLists.txt" | head -20
-          echo "=== Required files check ==="
-          test -f src/alu.sv && echo "✓ ALU source found" || echo "✗ ALU source missing"
-          test -f dv/alu_tb.cpp && echo "✓ C++ testbench found" || echo "✗ C++ testbench missing"
-          test -f CMakeLists.txt && echo "✓ CMakeLists.txt found" || echo "✗ CMakeLists.txt missing"
-
-      - name: Try CMake build first
-        continue-on-error: true
-        run: |
-          echo "=== Attempting CMake build ==="
-          cd build
-          cmake -S .. -B .
-          cmake --build . --target run_alu_tb -j || echo "CMake build failed"
-
-      - name: Manual Verilator build (fallback)
-        if: always()
-        run: |
-          echo "=== Manual Verilator Build Process ==="
-          rm -rf obj_dir verilated/
-          verilator -Wall --cc src/alu.sv --exe dv/alu_tb.cpp \
-                    -I./src --top-module alu --trace \
-                    || (echo "❌ Verilator generation failed" && exit 1)
-          test -d obj_dir && echo "✓ obj_dir created" || (echo "❌ obj_dir not created" && exit 1)
-          cd obj_dir
-          VERILATOR_ROOT="/usr/share/verilator"
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            VERILATOR_ROOT="/usr/local/share/verilator"
-          fi
-          CFLAGS="-Os -I. -MMD -I${VERILATOR_ROOT}/include -I${VERILATOR_ROOT}/include/vltstd"
-          CFLAGS="$CFLAGS -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1"
-          CFLAGS="$CFLAGS -faligned-new -fbracket-depth=4096"
-          CFLAGS="$CFLAGS -Wno-bool-operation -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable"
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            CFLAGS="$CFLAGS -fcf-protection=none"
-          fi
-          echo "Using CFLAGS: $CFLAGS"
-          g++ $CFLAGS -c -o alu_tb.o ../dv/alu_tb.cpp
-          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated.cpp
-          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated_vcd_c.cpp
-          g++ $CFLAGS -c ${VERILATOR_ROOT}/include/verilated_threads.cpp
-          for file in Valu.cpp Valu___024root__*.cpp Valu__Trace__*.cpp Valu__Syms.cpp; do
-            [ -f "$file" ] && g++ $CFLAGS -c "$file"
-          done
-          g++ -o Valu *.o -pthread
-          test -x Valu && echo "✓ Executable created" || (echo "❌ Link failed" && exit 1)
-
-      - name: Run ALU simulation
-        run: |
-          cd obj_dir
-          echo "=== Running ALU Simulation ==="
-          timeout 30s ./Valu || echo "Simulation completed or timed out"
-          [ -f alu_tb.vcd ] && echo "✓ VCD file generated" || echo "❌ VCD file not generated"
-
-      - name: Validate simulation results
-        run: |
-          cd obj_dir
-          echo "=== Simulation Validation ==="
-          if [ -f alu_tb.vcd ]; then
-            echo "VCD file size: $(stat -c%s alu_tb.vcd 2>/dev/null || stat -f%z alu_tb.vcd)"
-            grep -q "alu_in_a\|alu_in_b\|alu_out" alu_tb.vcd && echo "✓ VCD contains expected signals"
-            grep -q "^#[0-9]" alu_tb.vcd && echo "✓ VCD contains timing information"
-          fi
-
-      - name: Archive simulation artifacts
-        uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: alu-simulation-results-${{ matrix.os }}
-          path: |
-            obj_dir/alu_tb.vcd
-            obj_dir/Valu
-            obj_dir/*.cpp
-            obj_dir/*.h
-          retention-days: 7
-
-  lint-and-analyze:
+  lint-and-verify:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Verilator
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y verilator
+        
+    - name: Setup Python for testing
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install Python dependencies
+      run: |
+        pip install cocotb pytest cocotb-test
+        
+    - name: Verilator Lint Check
+      run: |
+        # Lint individual modules
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module alu alu.sv
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module control control.sv
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module regfile regfile.sv
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module pc pc.sv
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module data_memory data_memory.sv
+        verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module instr_memory instr_memory.sv
+        
+    - name: Create test program
+      run: |
+        # Create a simple test program for instruction memory
+        cat > program.mem << 'EOF'
+        0000000000000000
+        0001000001000000
+        0010000010000001
+        0100000011000001
+        0110000000000010
+        0000000000000000
+        EOF
+        
+    - name: Verilator Compilation Test
+      run: |
+        # Test compilation of top-level module
+        verilator --cc --exe --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module risc16_top risc16_top.sv --exe-name risc16_sim
+          
+    - name: Create basic testbench
+      run: |
+        cat > test_risc16.cpp << 'EOF'
+        #include "Vrisc16_top.h"
+        #include "verilated.h"
+        #include <iostream>
+        
+        int main(int argc, char** argv) {
+            Verilated::commandArgs(argc, argv);
+            Vrisc16_top* top = new Vrisc16_top;
+            
+            // Reset
+            top->reset = 1;
+            top->clk = 0;
+            top->eval();
+            top->clk = 1;
+            top->eval();
+            top->reset = 0;
+            
+            // Run for a few clock cycles
+            for (int i = 0; i < 10; i++) {
+                top->clk = 0;
+                top->eval();
+                top->clk = 1;
+                top->eval();
+                std::cout << "Cycle " << i << ": PC = 0x" << std::hex << top->curr_pc 
+                         << ", Instr = 0x" << top->curr_instr << std::endl;
+            }
+            
+            delete top;
+            return 0;
+        }
+        EOF
+        
+    - name: Build and run basic simulation
+      run: |
+        verilator --cc --exe --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module risc16_top risc16_top.sv test_risc16.cpp --exe-name risc16_sim
+        ./obj_dir/risc16_sim
 
-      - name: Install Verilator
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y verilator
-
-      - name: Lint SystemVerilog files
-        run: |
-          echo "=== Linting SystemVerilog Files ==="
-          for sv_file in $(find . -name "*.sv"); do
-            verilator --lint-only -Wall "$sv_file" -I./src || echo "Warning in $sv_file"
-          done
-
-      - name: Analyze C++ testbench
-        run: |
-          echo "=== Analyzing C++ Testbench ==="
-          if command -v cppcheck >/dev/null; then
-            cppcheck --enable=warning,style,performance --std=c++17 dv/*.cpp || true
-          else
-            echo "cppcheck not available"
-          fi
-
-  performance-benchmark:
+  unit-tests:
     runs-on: ubuntu-latest
-    needs: verilator-simulation
+    needs: lint-and-verify
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Verilator
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y verilator
+        
+    - name: Setup Python and CocoTB
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install test dependencies
+      run: |
+        pip install cocotb pytest cocotb-test
+        
+    - name: Create ALU unit test
+      run: |
+        mkdir -p tests
+        cat > tests/test_alu.py << 'EOF'
+        import cocotb
+        from cocotb.clock import Clock
+        from cocotb.triggers import RisingEdge
+        
+        @cocotb.test()
+        async def test_alu_add(dut):
+            """Test ALU addition operation"""
+            dut.alu_src1.value = 0x1234
+            dut.alu_src2.value = 0x5678
+            dut.ADD.value = 1
+            dut.NAND.value = 0
+            dut.PASS1.value = 0
+            dut.EQ.value = 0
+            
+            await cocotb.triggers.Timer(1, units='ns')
+            
+            expected = (0x1234 + 0x5678) & 0xFFFF
+            assert dut.alu_out.value == expected, f"ADD failed: got {dut.alu_out.value:04x}, expected {expected:04x}"
+            
+        @cocotb.test()
+        async def test_alu_nand(dut):
+            """Test ALU NAND operation"""
+            dut.alu_src1.value = 0xF0F0
+            dut.alu_src2.value = 0x0F0F
+            dut.ADD.value = 0
+            dut.NAND.value = 1
+            dut.PASS1.value = 0
+            dut.EQ.value = 0
+            
+            await cocotb.triggers.Timer(1, units='ns')
+            
+            expected = ~(0xF0F0 & 0x0F0F) & 0xFFFF
+            assert dut.alu_out.value == expected, f"NAND failed: got {dut.alu_out.value:04x}, expected {expected:04x}"
+        EOF
+        
+    - name: Create control unit test
+      run: |
+        cat > tests/test_control.py << 'EOF'
+        import cocotb
+        from cocotb.triggers import Timer
+        
+        @cocotb.test()
+        async def test_control_add(dut):
+            """Test control signals for ADD instruction"""
+            dut.opcode.value = 0b000  # ADD opcode
+            dut.eq_out.value = 0
+            
+            await Timer(1, units='ns')
+            
+            assert dut.ADD.value == 1, "ADD signal should be high for ADD instruction"
+            assert dut.we_reg.value == 1, "we_reg should be high for ADD instruction"
+            assert dut.NAND.value == 0, "NAND should be low for ADD instruction"
+            
+        @cocotb.test()
+        async def test_control_beq(dut):
+            """Test control signals for BEQ instruction"""
+            dut.opcode.value = 0b011  # BEQ opcode
+            dut.eq_out.value = 1
+            
+            await Timer(1, units='ns')
+            
+            assert dut.EQ.value == 1, "EQ signal should be high for BEQ instruction"
+            assert dut.BR.value == 1, "BR should be high when eq_out is true"
+        EOF
+        
+    - name: Run ALU tests
+      run: |
+        cd tests
+        cocotb-config --libdir
+        make -f $(cocotb-config --makefiles)/Makefile.sim \
+          MODULE=test_alu TOPLEVEL=alu VERILOG_SOURCES=../alu.sv SIM=verilator
+          
+    - name: Run Control tests  
+      run: |
+        cd tests
+        make -f $(cocotb-config --makefiles)/Makefile.sim \
+          MODULE=test_control TOPLEVEL=control VERILOG_SOURCES=../control.sv SIM=verilator
 
-      - name: Setup environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y verilator cmake time
-
-      - name: Build optimized simulation
-        run: |
-          rm -rf obj_dir
-          verilator -Wall --cc src/alu.sv --exe dv/alu_tb.cpp -I./src --top-module alu --trace -O3
-          cd obj_dir
-          CFLAGS="-O3 -march=native -I. -MMD -I/usr/share/verilator/include -I/usr/share/verilator/include/vltstd"
-          CFLAGS="$CFLAGS -DVM_TRACE=1 -Wno-bool-operation -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable"
-          g++ $CFLAGS -c -o alu_tb.o ../dv/alu_tb.cpp
-          g++ $CFLAGS -c /usr/share/verilator/include/verilated.cpp
-          g++ $CFLAGS -c /usr/share/verilator/include/verilated_vcd_c.cpp
-          g++ $CFLAGS -c /usr/share/verilator/include/verilated_threads.cpp
-          for file in Valu*.cpp; do
-            [ -f "$file" ] && g++ $CFLAGS -c "$file"
-          done
-          g++ -o Valu_optimized *.o -pthread
-
-      - name: Run performance benchmark
-        run: |
-          cd obj_dir
-          echo "=== Performance Benchmark ===" > ../benchmark_results.txt
-          echo "Timestamp: $(date)" >> ../benchmark_results.txt
-          echo "" >> ../benchmark_results.txt
-          { time timeout 30s ./Valu_optimized; } 2>&1 | tee -a ../benchmark_results.txt
-          echo "VCD file size: $(stat -c%s alu_tb.vcd 2>/dev/null || echo 'N/A')" >> ../benchmark_results.txt
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
-        with:
-          name: performance-benchmark
-          path: benchmark_results.txt
-
-  cross-platform-test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-20.04, ubuntu-22.04, macos-12, macos-13]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          if [[ "${{ matrix.os }}" == ubuntu* ]]; then
-            sudo apt-get update
-            sudo apt-get install -y verilator cmake
-          else
-            brew install verilator cmake
-          fi
-
-      - name: Quick build test
-        run: |
-          verilator --version
-          verilator -Wall --cc src/alu.sv -I./src --top-module alu
-          [ -d obj_dir ] && echo "✓ Verilator generation succeeded" || (echo "❌ Verilator generation failed" && exit 1)
-
-  documentation-check:
+  integration-test:
     runs-on: ubuntu-latest
+    needs: unit-tests
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Verilator
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y verilator gtkwave
+        
+    - name: Create comprehensive test program
+      run: |
+        cat > program.mem << 'EOF'
+        0000000000100000
+        0001000001000010
+        0010001000000101
+        0110000000000010
+        0100001001000000
+        1010001000000100
+        0000000000000000
+        EOF
+        
+    - name: Create integration testbench
+      run: |
+        cat > integration_test.cpp << 'EOF'
+        #include "Vrisc16_top.h"
+        #include "verilated.h"
+        #include "verilated_vcd_c.h"
+        #include <iostream>
+        
+        int main(int argc, char** argv) {
+            Verilated::commandArgs(argc, argv);
+            Vrisc16_top* top = new Vrisc16_top;
+            
+            Verilated::traceEverOn(true);
+            VerilatedVcdC* tfp = new VerilatedVcdC;
+            top->trace(tfp, 99);
+            tfp->open("simulation.vcd");
+            
+            int cycle = 0;
+            
+            // Reset
+            top->reset = 1;
+            top->clk = 0;
+            top->eval();
+            tfp->dump(cycle++);
+            
+            top->clk = 1;
+            top->eval();
+            tfp->dump(cycle++);
+            
+            top->reset = 0;
+            
+            // Run simulation
+            for (int i = 0; i < 50; i++) {
+                top->clk = 0;
+                top->eval();
+                tfp->dump(cycle++);
+                
+                top->clk = 1;
+                top->eval();
+                tfp->dump(cycle++);
+                
+                std::cout << "Cycle " << i << ": PC = 0x" << std::hex << top->curr_pc 
+                         << ", Instr = 0x" << top->curr_instr << std::endl;
+            }
+            
+            tfp->close();
+            delete top;
+            return 0;
+        }
+        EOF
+        
+    - name: Build and run integration test
+      run: |
+        verilator --cc --exe --build --trace -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
+          --top-module risc16_top risc16_top.sv integration_test.cpp --exe-name integration_sim
+        ./obj_dir/integration_sim
+        
+    - name: Upload simulation artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: simulation-results
+        path: |
+          simulation.vcd
+          *.log
+        retention-days: 7
 
-      - name: Check documentation completeness
-        run: |
-          echo "=== Documentation Check ===" > doc_report.txt
-          [ -f README.md ] && echo "✓ README.md found" >> doc_report.txt || echo "✗ README.md missing" >> doc_report.txt
-          echo "SystemVerilog documentation:" >> doc_report.txt
-          sv_total=$(find . -name "*.sv" | wc -l)
-          sv_commented=$(find . -name "*.sv" -exec grep -l "//" {} \; | wc -l)
-          echo "Commented SV files: $sv_commented/$sv_total" >> doc_report.txt
-          cpp_total=$(find . -name "*.cpp" | wc -l)
-          cpp_commented=$(find . -name "*.cpp" -exec grep -l "//" {} \; | wc -l)
-          echo "Commented C++ files: $cpp_commented/$cpp_total" >> doc_report.txt
-
-      - name: Upload documentation report
-        uses: actions/upload-artifact@v3
-        with:
-          name: documentation-report
-          path: doc_report.txt
+  documentation:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Generate documentation
+      run: |
+        mkdir -p docs
+        cat > docs/README.md << 'EOF'
+        # RISC-16 Processor Documentation
+        
+        ## Architecture Overview
+        
+        The RISC-16 is a 16-bit reduced instruction set processor with the following components:
+        
+        - **Program Counter (PC)**: 16-bit counter for instruction addressing
+        - **Register File**: 8 registers, 16-bit each (R0 hardwired to zero)
+        - **ALU**: Supports ADD, NAND, PASS1 operations and equality comparison
+        - **Instruction Memory**: 256 x 16-bit read-only memory
+        - **Data Memory**: 256 x 16-bit read/write memory
+        - **Control Unit**: Decodes 3-bit opcodes and generates control signals
+        
+        ## Supported Instructions
+        
+        | Opcode | Instruction | Description |
+        |--------|-------------|-------------|
+        | 000    | ADD         | Add two registers |
+        | 001    | NAND        | NAND two registers |
+        | 010    | LUI/JALR    | Load upper immediate / Jump and link register |
+        | 011    | BEQ         | Branch if equal |
+        | 100    | SW          | Store word |
+        | 101    | LW          | Load word |
+        
+        ## Testing
+        
+        The processor includes comprehensive testing with:
+        - Unit tests for individual modules
+        - Integration tests for full processor
+        - Linting and code quality checks
+        
+        EOF
+        
+    - name: Deploy documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: docs/
