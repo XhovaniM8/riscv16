@@ -257,7 +257,19 @@ jobs:
       run: |
         cd tests
         echo "Running ALU unit tests..."
-        COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        # Find cocotb makefiles using a more reliable method
+        COCOTB_MAKEFILES=$(python3 -c "import cocotb, os; print(os.path.join(os.path.dirname(cocotb.__file__), 'share', 'makefiles', 'Makefile.sim'))")
+        if [ ! -f "$COCOTB_MAKEFILES" ]; then
+          # Alternative path for newer cocotb versions
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb, os; print(os.path.join(os.path.dirname(cocotb.__file__), 'makefiles', 'Makefile.sim'))")
+        fi
+        if [ ! -f "$COCOTB_MAKEFILES" ]; then
+          # Try using cocotb-config if available
+          COCOTB_MAKEFILES=$(cocotb-config --makefiles 2>/dev/null)/Makefile.sim || echo "cocotb-config not found"
+        fi
+        
+        echo "Using makefile: $COCOTB_MAKEFILES"
+        
         make -f $COCOTB_MAKEFILES \
           MODULE=test_alu TOPLEVEL=alu VERILOG_SOURCES=../src/alu.sv SIM=verilator \
           COCOTB_LOG_LEVEL=INFO || echo "ALU tests completed with warnings"
@@ -266,7 +278,19 @@ jobs:
       run: |
         cd tests
         echo "Running Control unit tests..."
-        COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        # Find cocotb makefiles using a more reliable method
+        COCOTB_MAKEFILES=$(python3 -c "import cocotb, os; print(os.path.join(os.path.dirname(cocotb.__file__), 'share', 'makefiles', 'Makefile.sim'))")
+        if [ ! -f "$COCOTB_MAKEFILES" ]; then
+          # Alternative path for newer cocotb versions
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb, os; print(os.path.join(os.path.dirname(cocotb.__file__), 'makefiles', 'Makefile.sim'))")
+        fi
+        if [ ! -f "$COCOTB_MAKEFILES" ]; then
+          # Try using cocotb-config if available
+          COCOTB_MAKEFILES=$(cocotb-config --makefiles 2>/dev/null)/Makefile.sim || echo "cocotb-config not found"
+        fi
+        
+        echo "Using makefile: $COCOTB_MAKEFILES"
+        
         make -f $COCOTB_MAKEFILES \
           MODULE=test_control TOPLEVEL=control VERILOG_SOURCES=../src/control.sv SIM=verilator \
           COCOTB_LOG_LEVEL=INFO || echo "Control tests completed with warnings"
