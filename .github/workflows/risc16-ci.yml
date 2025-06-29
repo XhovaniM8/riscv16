@@ -6,13 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
-strategy:
-  matrix:
-    os: [ubuntu-latest, macos-latest]
-
 jobs:
   lint-and-verify:
     runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     
     steps:
     - name: Checkout code
