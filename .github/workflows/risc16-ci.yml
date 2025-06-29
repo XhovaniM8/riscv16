@@ -6,26 +6,37 @@ on:
   pull_request:
     branches: [ main ]
 
+strategy:
+  matrix:
+    os: [ubuntu-latest, macos-latest]
+
 jobs:
   lint-and-verify:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     
     steps:
     - name: Checkout code
       run: |
-        # Manual checkout since external actions are restricted
         git clone https://github.com/${{ github.repository }}.git .
         git checkout ${{ github.sha }}
         
-    - name: Setup Verilator and dependencies
+    - name: Setup Verilator and dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y verilator python3 python3-pip
         pip3 install cocotb pytest cocotb-test
         
+    - name: Setup Verilator and dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install verilator python3
+        pip3 install cocotb pytest cocotb-test
+        
     - name: Verilator Lint Check
       run: |
         cd src
+        echo "Running on ${{ matrix.os }}"
         # Lint individual modules
         echo "Linting ALU module..."
         verilator --lint-only --Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
@@ -73,7 +84,7 @@ jobs:
         # Test compilation of top-level module
         echo "Testing top-level compilation..."
         verilator --cc --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top risc16_top.sv --exe-name risc16_compile_test
+          --top-module risc16_top risc16_top.sv
         echo "Compilation successful!"
           
     - name: Create and run basic testbench
@@ -118,12 +129,15 @@ jobs:
         
         echo "Building and running simulation..."
         verilator --cc --exe --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top risc16_top.sv test_risc16.cpp --exe-name risc16_sim
-        ./obj_dir/risc16_sim
+          --top-module risc16_top risc16_top.sv test_risc16.cpp
+        ./obj_dir/Vrisc16_top
 
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     needs: lint-and-verify
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     
     steps:
     - name: Checkout code
@@ -131,10 +145,17 @@ jobs:
         git clone https://github.com/${{ github.repository }}.git .
         git checkout ${{ github.sha }}
         
-    - name: Setup test environment
+    - name: Setup test environment (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y verilator python3 python3-pip
+        pip3 install cocotb pytest cocotb-test
+        
+    - name: Setup test environment (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install verilator python3
         pip3 install cocotb pytest cocotb-test
         
     - name: Create ALU unit test
@@ -256,22 +277,39 @@ jobs:
     - name: Run ALU tests
       run: |
         cd tests
-        echo "Running ALU unit tests..."
-        make -f $(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim \
+        echo "Running ALU unit tests on ${{ matrix.os }}..."
+        # Use platform-specific approach for finding cocotb
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        else
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        fi
+        
+        make -f $COCOTB_MAKEFILES \
           MODULE=test_alu TOPLEVEL=alu VERILOG_SOURCES=../src/alu.sv SIM=verilator \
           COCOTB_LOG_LEVEL=INFO || echo "ALU tests completed with warnings"
           
     - name: Run Control tests  
       run: |
         cd tests
-        echo "Running Control unit tests..."
-        make -f $(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim \
+        echo "Running Control unit tests on ${{ matrix.os }}..."
+        # Use platform-specific approach for finding cocotb
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        else
+          COCOTB_MAKEFILES=$(python3 -c "import cocotb; print(cocotb.config.libs_dir)")/makefiles/Makefile.sim
+        fi
+        
+        make -f $COCOTB_MAKEFILES \
           MODULE=test_control TOPLEVEL=control VERILOG_SOURCES=../src/control.sv SIM=verilator \
           COCOTB_LOG_LEVEL=INFO || echo "Control tests completed with warnings"
 
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     needs: unit-tests
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     
     steps:
     - name: Checkout code
@@ -279,10 +317,16 @@ jobs:
         git clone https://github.com/${{ github.repository }}.git .
         git checkout ${{ github.sha }}
         
-    - name: Setup environment
+    - name: Setup environment (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y verilator
+        
+    - name: Setup environment (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install verilator
         
     - name: Create comprehensive test program
       run: |
@@ -386,12 +430,12 @@ jobs:
     - name: Build and run integration test
       run: |
         cd src
-        echo "Building integration test..."
+        echo "Building integration test on ${{ matrix.os }}..."
         verilator --cc --exe --build --trace -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top risc16_top.sv integration_test.cpp --exe-name integration_sim
+          --top-module risc16_top risc16_top.sv integration_test.cpp
           
         echo "Running integration test..."
-        ./obj_dir/integration_sim
+        ./obj_dir/Vrisc16_top
         
         echo "Integration test results:"
         if [ -f simulation.log ]; then
@@ -417,6 +461,8 @@ jobs:
         echo "Branch: ${{ github.ref_name }}"
         echo "Triggered by: ${{ github.event_name }}"
         echo ""
+        echo "Tested on: Ubuntu + macOS"
+        echo ""
         echo "Job Status:"
         echo "- Lint and Verify: ${{ needs.lint-and-verify.result }}"
         echo "- Unit Tests: ${{ needs.unit-tests.result }}"
@@ -425,7 +471,8 @@ jobs:
         if [ "${{ needs.lint-and-verify.result }}" = "success" ] && \
            [ "${{ needs.unit-tests.result }}" = "success" ] && \
            [ "${{ needs.integration-test.result }}" = "success" ]; then
-          echo "✅ All tests passed! RISC-16 processor is ready for deployment."
+          echo "✅ All tests passed on both platforms! RISC-16 processor is ready for deployment."
         else
           echo "❌ Some tests failed. Please check the logs above."
+          echo "Note: Tests run on both Ubuntu and macOS - check individual job results."
         fi
