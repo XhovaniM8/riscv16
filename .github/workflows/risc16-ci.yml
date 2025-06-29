@@ -70,11 +70,10 @@ jobs:
     - name: Verilator Compilation Test
       run: |
         cd src
-        # Test compilation of top-level module with all dependencies
+        # Test compilation of top-level module (includes handle dependencies)
         echo "Testing top-level compilation..."
         verilator --cc --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top \
-          pc.sv regfile.sv instr_memory.sv data_memory.sv alu.sv control.sv risc16_top.sv
+          --top-module risc16_top risc16_top.sv
         echo "Compilation successful!"
           
     - name: Create and run basic testbench
@@ -119,9 +118,7 @@ jobs:
         
         echo "Building and running simulation..."
         verilator --cc --exe --build -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top \
-          pc.sv regfile.sv instr_memory.sv data_memory.sv alu.sv control.sv risc16_top.sv \
-          test_risc16.cpp
+          --top-module risc16_top risc16_top.sv test_risc16.cpp
         ./obj_dir/Vrisc16_top
 
   unit-tests:
@@ -417,9 +414,7 @@ jobs:
         cd src
         echo "Building integration test..."
         verilator --cc --exe --build --trace -Wall -Wno-UNUSEDSIGNAL -Wno-PINCONNECTEMPTY \
-          --top-module risc16_top \
-          pc.sv regfile.sv instr_memory.sv data_memory.sv alu.sv control.sv risc16_top.sv \
-          integration_test.cpp
+          --top-module risc16_top risc16_top.sv integration_test.cpp
           
         echo "Running integration test..."
         ./obj_dir/Vrisc16_top
