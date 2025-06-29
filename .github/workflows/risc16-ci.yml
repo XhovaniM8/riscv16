@@ -2,7 +2,7 @@ name: RISC-16 Processor CI/CD
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ develop, test ]
   pull_request:
     branches: [ main ]
 
